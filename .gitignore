@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env e credenciais
+.env
+.env.*
+
+# Dados (sensível/grande)
+data/
+output/
+outputs/
+
+# Testes temporários
+wp5_test_*/
+
+# Modelos YOLO genéricos (vamos adicionar o específico manualmente)
+yolo*.pt
+
+# Runs de treino (exceto o que queremos)
+runs_yolo/
+
+# Arquivos temporários
+*.csv
+*.txt
+!requirements.txt
+raw_folders.json
+val_folders.json
+
+# Arquivos de debug
+edited_exif_*.txt
+edited_folders.txt
+
+# Outros
+=8.2.0
+*.zip

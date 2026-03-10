@@ -1,0 +1,34 @@
+# --- Core ---
+numpy>=1.24.0
+tqdm>=4.65.0
+pillow>=10.0.0
+matplotlib>=3.7.0
+
+# OpenCV
+opencv-python-headless>=4.8.0.74
+# opencv-python  # use localmente se quiser abrir janelas GUI
+
+# Open-vocabulary backends (se usados por outros módulos)
+groundingdino-py
+supervision
+
+# Transformers stack
+transformers>=4.40.0
+accelerate
+safetensors
+huggingface_hub
+
+# YOLO
+ultralytics>=8.0.0
+torch>=2.0.0
+
+# FLIR
+flirimageextractor>=1.5.5
+flirpy  # opcional: mantenha se algum script adicional usar
+
+# OpenAI / env
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# EXIF fallback
+piexif>=1.1.3
