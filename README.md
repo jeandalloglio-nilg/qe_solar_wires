@@ -283,20 +283,27 @@ O Atlas SDK é necessário para o Thermal Tuning (WP2). É uma ferramenta C++ qu
 
 **Compilação:**
 ```bash
-cd atlas_sdk
-mkdir build && cd build
-cmake ..
-make
+make -C atlas_sdk clean
+make -C atlas_sdk
+
+chmod +x atlas_sdk/build/atlas_scale_set atlas_sdk/build/check_settings
 ```
 
 **Verificação:**
 ```bash
-./atlas_scale_set --help
+./atlas_sdk/build/atlas_scale_set --help
 ```
 
 **Localização esperada:**
 ```
 atlas_sdk/build/atlas_scale_set
+```
+
+**SDK oficial (repo):**
+```
+flir_atlas_c/
+  include/
+  lib/
 ```
 
 ### 5.3 Parâmetros de Alinhamento (Thermal → RGB)
@@ -492,6 +499,12 @@ python -m src.tools.run_full_pipeline \
 ├── keypoints_used.json
 ├── anomalies.json
 └── <name>_edited.jpg  # Com spots injetados
+```
+
+**FLIR Tools (spots no EXIF):**
+Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em:
+```
+05_wp4_wp5_analysis/edited/
 ```
 
 **Módulo:** `src.tools.wp4_wp5_integration_v4`
@@ -840,12 +853,12 @@ python -m src.tools.run_full_pipeline \
 - [ ] Atlas SDK compilado (opcional, para WP2)
 - [ ] Espaço em disco suficiente (~3x tamanho das RAW)
 
-### Contatos e Suporte
+### OpenAI (opcional)
 
-**Autor original:** Elton Gino  
-**Projeto:** QE Solar Thermal Inspection Pipeline  
-**Documentação criada em:** Fevereiro 2025
+Se você for usar clustering via OpenAI, coloque a chave em um arquivo `.env` na raiz do repositório:
+```
+OPENAI_API_KEY=...
+```
 
----
+**Nota:** `.env` é ignorado pelo `.gitignore`.
 
-*Fim da documentação*

@@ -1,4 +1,5 @@
-ATLAS_SDK_HOME ?= /home/ubuntu/flir_atlas_c # Raiz do SDK Atlas C
+## Raiz do SDK Atlas C
+ATLAS_SDK_HOME ?= $(abspath ../flir_atlas_c)
 
 CC := gcc
 CFLAGS := -O2 -Wall -I$(ATLAS_SDK_HOME)/include

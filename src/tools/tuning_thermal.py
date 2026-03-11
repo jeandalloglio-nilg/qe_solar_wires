@@ -224,12 +224,39 @@ def atlas_cli_path(atlas_sdk_dir: Path) -> Path:
     return cli
 
 
+def atlas_runtime_env(atlas_sdk_dir: Path) -> Dict[str, str]:
+    env = dict(os.environ)
+    libdirs: List[str] = []
+
+    atlas_home = env.get("ATLAS_SDK_HOME")
+    if atlas_home:
+        libdirs.append(str(Path(atlas_home) / "lib"))
+
+    repo_lib = atlas_sdk_dir.parent / "flir_atlas_c" / "lib"
+    if repo_lib.is_dir():
+        libdirs.append(str(repo_lib))
+
+    existing = env.get("LD_LIBRARY_PATH", "")
+    merged = ":".join([p for p in libdirs if p] + ([existing] if existing else []))
+    if merged:
+        env["LD_LIBRARY_PATH"] = merged
+    return env
+
+
 def apply_scale_with_cli(cli: Path, img: Path, tmin: float, tmax: float, palette: str) -> None:
     tmp_path = img.with_suffix(img.suffix + ".atlas_tmp")
     if tmp_path.exists():
         tmp_path.unlink()
 
-    cp = run([str(cli), str(img), f"{tmin}", f"{tmax}", palette, str(tmp_path)], check=False)
+    env = atlas_runtime_env(cli.parent.parent)
+    cp = subprocess.run(
+        [str(cli), str(img), f"{tmin}", f"{tmax}", palette, str(tmp_path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
     if cp.returncode != 0:
         raise RuntimeError(f"atlas_scale_set failed for {img.name} (rc={cp.returncode}):\n{(cp.stdout or '').strip()}")
 

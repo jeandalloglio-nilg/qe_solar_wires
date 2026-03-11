@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 venv/
 ENV/
+qesolar_env/
 
 # IDE
 .idea/
@@ -17,11 +18,14 @@ ENV/
 # Env e credenciais
 .env
 .env.*
+openai_key/
 
 # Dados (sensível/grande)
 data/
 output/
 outputs/
+output_test/
+test_images/
 
 # Testes temporários
 wp5_test_*/

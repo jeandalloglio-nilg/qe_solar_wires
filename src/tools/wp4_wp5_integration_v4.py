@@ -81,6 +81,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from dotenv import load_dotenv
+
 import cv2
 import numpy as np
 
@@ -708,6 +710,7 @@ def call_openai_clusters(
     except Exception as e:
         raise ImportError("openai python package not available. Install/update: pip install -U openai") from e
 
+    load_dotenv()
     client = OpenAI()
     b64 = _image_to_base64_jpeg(image_bgr_with_ids, max_size=1280)
     data_uri = f"data:image/jpeg;base64,{b64}"
@@ -1416,8 +1419,8 @@ def inject_spots_to_exif(
     source_raw: Path, 
     output_path: Path, 
     keypoints: List[Dict],
-    atlas_include: str = "/home/elton/qe_solar_wires/flir_atlas_c/include",
-    atlas_libdir: str = "/home/elton/qe_solar_wires/flir_atlas_c/lib",
+    atlas_include: str = "",
+    atlas_libdir: str = "",
     atlas_libs: str = "atlas_c_sdk",
 ) -> bool:
     """
@@ -1439,6 +1442,14 @@ def inject_spots_to_exif(
         True se sucesso
     """
     import shutil
+
+    if not atlas_include or not atlas_libdir:
+        repo_root = Path(__file__).resolve().parents[2]
+        atlas_root = repo_root / "flir_atlas_c"
+        if not atlas_include:
+            atlas_include = str(atlas_root / "include")
+        if not atlas_libdir:
+            atlas_libdir = str(atlas_root / "lib")
     
     # Extrair coordenadas térmicas
     coords = []
@@ -1466,7 +1477,10 @@ def inject_spots_to_exif(
         cmd.extend([str(x), str(y)])
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        env = dict(os.environ)
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{atlas_libdir}:{existing}" if existing else str(atlas_libdir)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         if result.returncode != 0:
             print(f"⚠️  Atlas SDK error: {result.stderr or result.stdout}")
             return False
@@ -1532,10 +1546,20 @@ def _ensure_atlas_tool(
     
     exe_path = build_dir / "atlas_write_spots"
     src_path = build_dir / "atlas_write_spots.c"
+    meta_path = build_dir / "atlas_write_spots.meta.json"
     
-    # Se já existe, retornar
-    if exe_path.exists():
-        return exe_path
+    # Se já existe e a config é a mesma, retornar
+    if exe_path.exists() and meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if (
+                meta.get("atlas_include") == str(atlas_include)
+                and meta.get("atlas_libdir") == str(atlas_libdir)
+                and meta.get("atlas_libs") == str(atlas_libs)
+            ):
+                return exe_path
+        except Exception:
+            pass
     
     # Escrever código fonte
     src_path.write_text(_ATLAS_WRITE_SPOTS_C)
@@ -1559,8 +1583,23 @@ def _ensure_atlas_tool(
     if result.returncode != 0:
         print(f"⚠️  Compilação falhou: {result.stderr}")
         return None
-    
+
     if exe_path.exists():
+        try:
+            exe_path.chmod(exe_path.stat().st_mode | 0o111)
+        except Exception:
+            pass
+        try:
+            meta_path.write_text(
+                json.dumps(
+                    {"atlas_include": str(atlas_include), "atlas_libdir": str(atlas_libdir), "atlas_libs": str(atlas_libs)},
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
         print(f"   ✅ Compilado: {exe_path}")
         return exe_path
     
@@ -1621,9 +1660,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--dual-viz", action="store_true", default=True, help="Generate visualizations in both thermal and RGB")
     
     # Atlas SDK configuration
-    parser.add_argument("--atlas-include", default="/home/elton/qe_solar_wires/flir_atlas_c/include",
+    parser.add_argument("--atlas-include", default="",
                         help="Atlas SDK include directory")
-    parser.add_argument("--atlas-libdir", default="/home/elton/qe_solar_wires/flir_atlas_c/lib",
+    parser.add_argument("--atlas-libdir", default="",
                         help="Atlas SDK library directory")
     parser.add_argument("--atlas-libs", default="atlas_c_sdk",
                         help="Atlas SDK library name(s), comma-separated")
@@ -1631,6 +1670,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     _load_env_if_available()
+
+    # Resolve Atlas SDK paths (repo-local default)
+    repo_root = Path(__file__).resolve().parents[2]
+    atlas_root = repo_root / "flir_atlas_c"
+    if (not args.atlas_include) or (not Path(str(args.atlas_include)).is_dir()):
+        args.atlas_include = str(atlas_root / "include")
+    if (not args.atlas_libdir) or (not Path(str(args.atlas_libdir)).is_dir()):
+        args.atlas_libdir = str(atlas_root / "lib")
 
     # Determine source image (RAW or Edited)
     source_image: Optional[Path] = None
