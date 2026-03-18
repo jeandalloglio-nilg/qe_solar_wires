@@ -793,15 +793,66 @@ grep -r "error" output/Site/05_wp4_wp5_analysis/*/anomalies.json
 
 Se a performance do modelo degradar ou novos tipos de painéis forem adicionados:
 
-1. **Coletar novas imagens anotadas**
-2. **Preparar dataset no formato YOLO**
-3. **Treinar novo modelo**
+1. **Preparar dataset YOLO a partir de spots no EXIF (recomendado)**
+
+   Este fluxo alinha o domínio de treino com o domínio de inferência do pipeline (que roda YOLO sobre `thermal_clean`).
+
    ```bash
-   yolo train data=dataset.yaml model=yolov8n-pose.pt epochs=100
+   python -m src.tools.prepare_yolo_dataset_from_exif_spots \
+     --input-images /home/jean/qe_solar_wires/dataset2train/Edited \
+     --output-dataset /home/jean/qe_solar_wires/data/all_clean_bbox_10 \
+     --render-clean-ui \
+     --bbox-size 10 \
+     --only-thermal-320x240 \
+     --skip-exiftool-errors \
+     --skip-render-errors
    ```
-4. **Atualizar path no pipeline**
+
+   Referência: `src/tools/docs/prepare_yolo_dataset_from_exif_spots.md`.
+
+2. **Validar visualmente algumas amostras (Edited vs Clean + labels)**
+
+   Em ambiente headless, o `--show` gera um PNG temporário em `/tmp` (ou no caminho indicado por `--tmp-output`).
+
    ```bash
-   --yolo-model "runs/wp4_keypoints/train_NOVO/weights/best.pt"
+   python -m src.tools.viz_exif_spots_on_clean \
+     --mode yolo \
+     --edited-image /home/jean/qe_solar_wires/dataset2train/Edited/FLIR3243.jpg \
+     --clean-image  /home/jean/qe_solar_wires/data/all_clean_bbox_10/images/FLIR3243_clean.png \
+     --yolo-label   /home/jean/qe_solar_wires/data/all_clean_bbox_10/labels/FLIR3243_clean.txt \
+     --draw-ids \
+     --show \
+     --no-save \
+     --tmp-output /home/jean/qe_solar_wires/tmp/compare_FLIR3243.png
+   ```
+
+   Referência: `src/tools/docs/viz_exif_spots_on_clean.md`.
+
+3. **Treinar um novo modelo YOLO**
+
+   ```bash
+   python -m src.tools.train_yolo_wp4 \
+     --data-dir /home/jean/qe_solar_wires/data/all_clean_bbox_10 \
+     --epochs 300 \
+     --batch 8 \
+     --imgsz 640 \
+     --model yolov8n.pt
+   ```
+
+   Referência: `src/tools/docs/train_yolo_wp4.md`.
+
+4. **Atualizar o path do modelo no pipeline**
+
+   Após o treino, use o `best.pt` gerado em:
+
+   ```text
+   runs/wp4_keypoints/train_YYYYMMDD_HHMMSS/weights/best.pt
+   ```
+
+   E atualize:
+
+   ```bash
+   --yolo-model "runs/wp4_keypoints/train_YYYYMMDD_HHMMSS/weights/best.pt"
    ```
 
 ### 11.2 Atualização de Dependências

@@ -736,7 +736,43 @@ def call_openai_clusters(
         },
         temperature=float(temperature),
     )
-    return json.loads(resp.output_text)
+    raw_text = (getattr(resp, "output_text", None) or "").strip()
+    last_err: Optional[Exception] = None
+    for _attempt in range(2):
+        if not raw_text:
+            last_err = ValueError("OpenAI response output_text is empty")
+        else:
+            try:
+                return json.loads(raw_text)
+            except json.JSONDecodeError as e:
+                last_err = e
+
+        # Retry once with a fresh call (occasionally output_text arrives empty/truncated)
+        resp = client.responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": data_uri},
+                    ],
+                }
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "cluster_result",
+                    "schema": CLUSTER_SCHEMA,
+                    "strict": True,
+                }
+            },
+            temperature=float(temperature),
+        )
+        raw_text = (getattr(resp, "output_text", None) or "").strip()
+
+    preview = raw_text[:200].replace("\n", "\\n") if raw_text else "<empty>"
+    raise ValueError(f"Failed to parse OpenAI clustering JSON. output_text preview: {preview}") from last_err
 
 
 def fix_and_validate_clusters(
@@ -1749,6 +1785,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # Keypoints
     print(f"\n🎯 Keypoint source: {args.keypoint_source.upper()}")
+    no_keypoints = False
     if args.keypoint_source == "yolo":
         if not args.yolo_model:
             print("❌ --keypoint-source yolo requires --yolo-model")
@@ -1772,17 +1809,20 @@ def main(argv: Optional[List[str]] = None) -> None:
             device=str(args.yolo_device),
         )
         if not yolo_kps:
-            print("❌ No keypoints found by YOLO.")
-            sys.exit(2)
-
-        keypoints = map_yolo_keypoints_to_thermal_space(yolo_kps, yolo_size=yolo_size, thermal_size=th_size)
-        print(f"   ✅ YOLO points: {len(keypoints)} | yolo {yolo_size[0]}x{yolo_size[1]} -> thermal {th_size[0]}x{th_size[1]}")
+            print("⚠️  No keypoints found by YOLO.")
+            keypoints = []
+            no_keypoints = True
+        else:
+            keypoints = map_yolo_keypoints_to_thermal_space(yolo_kps, yolo_size=yolo_size, thermal_size=th_size)
+            print(f"   ✅ YOLO points: {len(keypoints)} | yolo {yolo_size[0]}x{yolo_size[1]} -> thermal {th_size[0]}x{th_size[1]}")
     else:
         keypoints = extract_keypoints_from_exif(exif)
         if not keypoints:
-            print("❌ No keypoints found in EXIF.")
-            sys.exit(2)
-        print(f"   ✅ EXIF points: {len(keypoints)}")
+            print("⚠️  No keypoints found in EXIF.")
+            keypoints = []
+            no_keypoints = True
+        else:
+            print(f"   ✅ EXIF points: {len(keypoints)}")
 
     # Temperatures (thermal space)
     temp_summary: Dict[str, Any] = {}
@@ -1850,6 +1890,72 @@ def main(argv: Optional[List[str]] = None) -> None:
     kp_out = out_dir / "keypoints_used.json"
     _write_json(kp_out, keypoints)
     _write_json(out_dir / f"{base_image_path.stem}_keypoints_used.json", keypoints)
+
+    if no_keypoints:
+        clusters_fixed = {
+            "clusters": [],
+            "annotation_spec": {
+                "draw_cluster_tag_next_to_each_keypoint": True,
+                "cluster_tag_format": "C{cluster_id}",
+                "legend_box": True,
+                "legend_entries": [],
+            },
+        }
+        anomaly_report = {
+            "total_anomalies": 0,
+            "high_severity": 0,
+            "medium_severity": 0,
+            "low_severity": 0,
+            "anomalies": [],
+        }
+
+        clusters_out = out_dir / f"{base_image_path.stem}_clusters.json"
+        _write_json(clusters_out, clusters_fixed)
+        anomalies_out = out_dir / "anomalies.json"
+        _write_json(anomalies_out, anomaly_report)
+
+        print("\n✅ Done (no keypoints).")
+        # Still allow EXIF injection (will copy original if no coords)
+        exif_output_path = None
+        if args.inject_exif and raw_mode:
+            print("\n💉 Injecting spots via Atlas SDK...")
+            edited_dir = out_dir.parent / "edited"
+            edited_dir.mkdir(parents=True, exist_ok=True)
+            exif_output_path = edited_dir / f"{prefix}_with_spots.jpg"
+            if inject_spots_to_exif(
+                source_image,
+                exif_output_path,
+                keypoints,
+                atlas_include=args.atlas_include,
+                atlas_libdir=args.atlas_libdir,
+                atlas_libs=args.atlas_libs,
+            ):
+                print(f"   ✅ ../edited/{exif_output_path.name}")
+            else:
+                print("   ⚠️  Atlas SDK injection failed")
+                exif_output_path = None
+
+        run_meta = {
+            "mode": mode,
+            "raw_mode": raw_mode,
+            "source_image": str(source_image),
+            "base_image": str(base_image_path),
+            "keypoint_source": str(args.keypoint_source),
+            "yolo_model": str(args.yolo_model) if args.yolo_model else None,
+            "yolo_image": str(args.yolo_image) if args.yolo_image else None,
+            "temperature_extraction": bool(args.extract_temperatures),
+            "temperature_summary": temp_summary,
+            "delta_threshold_c": float(args.delta_threshold),
+            "openai_model": str(args.openai_model),
+            "output_dir": str(out_dir),
+            "output_prefix": prefix,
+            "dual_viz": False,
+            "exif_injected": exif_output_path is not None,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "version": "v5",
+        }
+        _write_json(out_dir / "run_metadata.json", run_meta)
+        return
 
     # Prepare LLM image
     llm_img = draw_keypoints_for_llm(base_bgr, keypoints)

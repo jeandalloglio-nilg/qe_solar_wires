@@ -578,29 +578,45 @@ def step_4_wp4_wp5_analysis(
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             if proc.returncode != 0:
                 print(f"   ❌ Erro")
-                if proc.stderr:
+                err_text = (proc.stderr or "").strip()
+                out_text = (proc.stdout or "").strip()
+                combined = err_text if err_text else out_text
+                if combined:
                     # Mostrar apenas últimas linhas relevantes
-                    err_lines = proc.stderr.strip().split('\n')[-5:]
-                    for line in err_lines:
+                    tail_lines = combined.split('\n')[-8:]
+                    for line in tail_lines:
                         if line.strip():
-                            print(f"      {line[:100]}")
+                            print(f"      {line[:160]}")
                 result.status = "error"
-                result.error_message = proc.stderr[:300] if proc.stderr else "Unknown"
+                if combined:
+                    result.error_message = combined[:800]
+                else:
+                    result.error_message = "Unknown"
             else:
                 # Parse results
                 anomalies_path = img_output_dir / "anomalies.json"
                 if anomalies_path.exists():
-                    data = json.loads(anomalies_path.read_text())
-                    result.anomaly_count = data.get("total_anomalies", 0)
-                    result.anomalies = data.get("anomalies", [])
-                
+                    try:
+                        data = json.loads(anomalies_path.read_text(encoding="utf-8"))
+                        anomalies = data.get("anomalies", []) if isinstance(data, dict) else []
+                        result.anomalies = anomalies if isinstance(anomalies, list) else []
+                        result.anomaly_count = int(data.get("total_anomalies", len(result.anomalies))) if isinstance(data, dict) else len(result.anomalies)
+                    except json.JSONDecodeError as e:
+                        result.status = "error"
+                        result.error_message = f"Invalid anomalies.json: {e}"
+
                 kp_path = img_output_dir / "keypoints_used.json"
                 if kp_path.exists():
-                    result.keypoint_count = len(json.loads(kp_path.read_text()))
-                
-                result.status = "success"
-                print(f"   ✅ {result.keypoint_count} kps, {result.anomaly_count} anomalias")
-                
+                    try:
+                        result.keypoint_count = len(json.loads(kp_path.read_text(encoding="utf-8")))
+                    except json.JSONDecodeError as e:
+                        result.status = "error"
+                        result.error_message = f"Invalid keypoints_used.json: {e}"
+
+                if result.status != "error":
+                    result.status = "success"
+                    print(f"   ✅ {result.keypoint_count} kps, {result.anomaly_count} anomalias")
+
         except subprocess.TimeoutExpired:
             print(f"   ❌ Timeout (300s)")
             result.status = "error"

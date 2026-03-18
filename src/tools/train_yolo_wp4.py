@@ -26,6 +26,10 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
 # Classes para detecção de keypoints térmicos
 DEFAULT_CLASSES = [
     "hotspot",           # Ponto quente genérico
@@ -251,7 +255,7 @@ def run_yolo_training(
     print("-" * 60)
     
     try:
-        result = subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=True, cwd=str(_repo_root()))
         return result.returncode == 0
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Erro no treino: {e}")
@@ -292,7 +296,7 @@ def run_yolo_validation(
     print("-" * 60)
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_repo_root()))
         print(result.stdout)
         if result.returncode == 0:
             # Tentar parsear métricas do output
@@ -358,7 +362,7 @@ def main():
     parser.add_argument("--classes-file", help="Arquivo JSON com classes")
     
     # Outputs
-    parser.add_argument("--project", default="runs/wp4_keypoints",
+    parser.add_argument("--project", default=str(_repo_root() / "runs" / "wp4_keypoints"),
                        help="Diretório do projeto")
     parser.add_argument("--name", help="Nome do experimento")
     

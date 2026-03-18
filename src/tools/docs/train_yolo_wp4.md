@@ -137,6 +137,27 @@ data/wp4_dataset/
     └── val.txt          # Lista de imagens para validação
 ```
 
+### 4.1.1 Dataset gerado via EXIF spots (clean UI)
+
+Um fluxo comum no projeto é preparar o dataset automaticamente a partir de *spots* presentes no EXIF FLIR (MeasXParams), gerando imagens `*_clean.png` (thermal clean) para alinhar o domínio de treino com o domínio de inferência do pipeline.
+
+Nesse caso, a estrutura final fica:
+
+```text
+data/all_clean_bbox_10/
+├── images/
+│   ├── FLIR0001_clean.png
+│   └── ...
+├── labels/
+│   ├── FLIR0001_clean.txt
+│   └── ...
+└── splits/
+    ├── train.txt
+    └── val.txt
+```
+
+Referência: `src/tools/docs/prepare_yolo_dataset_from_exif_spots.md`.
+
 ### 4.2 Formato dos Labels (YOLO)
 
 ```
@@ -405,6 +426,21 @@ python src/tools/train_yolo_wp4.py \
     --imgsz 640 \
     --model yolov8n.pt
 ```
+
+### 8.1.1 Treino usando dataset clean gerado por EXIF spots
+
+```bash
+python -m src.tools.train_yolo_wp4 \
+  --data-dir /home/jean/qe_solar_wires/data/all_clean_bbox_10 \
+  --epochs 300 \
+  --batch 8 \
+  --imgsz 640 \
+  --model yolov8n.pt
+```
+
+Valide visualmente algumas amostras antes do treino:
+
+- Ver doc: `src/tools/docs/viz_exif_spots_on_clean.md`
 
 ### 8.2 Treino com GPU Específica
 
