@@ -91,8 +91,11 @@ def validate_dataset_structure(data_dir: Path) -> Dict:
         
         # Verificar correspondência imagens <-> labels
         if images_dir.exists():
-            img_stems = {f.stem.replace("_clean", "") for f in images}
-            label_stems = {f.stem for f in labels}
+            def _norm_stem(stem: str) -> str:
+                return stem[:-6] if stem.endswith("_clean") else stem
+
+            img_stems = {_norm_stem(f.stem) for f in images}
+            label_stems = {_norm_stem(f.stem) for f in labels}
             
             missing_labels = img_stems - label_stems
             orphan_labels = label_stems - img_stems

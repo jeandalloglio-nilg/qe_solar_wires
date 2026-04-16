@@ -268,6 +268,11 @@ O pipeline utiliza um modelo YOLO treinado especificamente para detectar keypoin
 models/best.pt
 ```
 
+**Nota:** Se `models/best.pt` não existir, o pipeline tenta auto-detectar automaticamente o modelo mais recente em:
+```
+runs/wp4_keypoints/**/weights/best.pt
+```
+
 **Modelos treinados disponíveis:**
 ```
 runs/wp4_keypoints/train_YYYYMMDD_HHMMSS/weights/best.pt
@@ -347,6 +352,25 @@ python -m src.tools.run_full_pipeline \
     --offset-y -13
 ```
 
+### 6.2.1 Modo de Saída Minimal (visible/ + FLIR/)
+
+Use este modo quando você quer **rodar o pipeline completo**, mas no final manter apenas os outputs essenciais, separados em duas pastas:
+
+- `visible/`: imagens térmicas com keypoints desenhados (visualização rápida)
+- `FLIR/`: imagens térmicas com spots/keypoints gravados no EXIF (para abrir no FLIR Tools)
+
+```bash
+python -m src.tools.run_full_pipeline \
+    --site-folder "data/<Cliente>/<Site>/<Ano>" \
+    --output "output/<Nome_Output>" \
+    --minimal-output \
+    --force-clean-output \
+    --yolo-model "runs/wp4_keypoints/train_YYYYMMDD_HHMMSS/weights/best.pt" \
+    --yolo-conf 0.15
+```
+
+**Arquivo adicional:** no modo `--minimal-output`, o pipeline também grava um `pipeline_log.json` no `--output` final, para permitir retry de erros.
+
 ### 6.3 Exemplos Práticos
 
 **Exemplo 1: Site novo com configuração padrão**
@@ -364,6 +388,19 @@ python -m src.tools.run_full_pipeline \
     --skip-clean \
     --skip-wp1 \
     --skip-wp2
+```
+
+**Exemplo 2B: Reprocessar apenas imagens que deram erro (retry automático via log)**
+
+Se uma execução anterior gerou `pipeline_log.json` (inclui status por imagem), você pode reprocessar **somente** as imagens com `status=error`:
+
+```bash
+python -m src.tools.run_full_pipeline \
+    --site-folder "data/Cliente/Site/2025" \
+    --output "output/Site_retry" \
+    --minimal-output \
+    --force-clean-output \
+    --retry-errors-from "output/Site/pipeline_log.json"
 ```
 
 **Exemplo 3: Apenas sorting e organização (sem análise)**
@@ -584,6 +621,9 @@ Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravado
 |-----------|---------|-----------|
 | `--raw-subdir` | Auto | Nome da subpasta RAW |
 | `--atlas-sdk-dir` | Auto | Diretório do Atlas SDK |
+| `--minimal-output` | false | Exporta apenas outputs finais em `visible/` e `FLIR/` (sem manter intermediários) |
+| `--force-clean-output` | false | No modo `--minimal-output`, apaga o conteúdo existente do `--output` antes de exportar |
+| `--retry-errors-from` | None | Reprocessa apenas imagens com `status=error` a partir de um `pipeline_log.json` |
 
 ---
 
@@ -635,6 +675,21 @@ output/<Nome_Output>/
 │   ├── site_summary.json
 │   └── anomalies_report.csv
 │
+└── pipeline_log.json
+```
+
+### 9.1.1 Estrutura de Saída no modo `--minimal-output`
+
+Neste modo o pipeline roda internamente em uma pasta temporária e, ao final, mantém apenas:
+
+```
+output/<Nome_Output>/
+├── visible/
+│   ├── <prefix>_thermal_visible.png
+│   └── ...
+├── FLIR/
+│   ├── <prefix>_thermal_FLIR.jpg
+│   └── ...
 └── pipeline_log.json
 ```
 
@@ -756,6 +811,24 @@ cd atlas_sdk && mkdir build && cd build && cmake .. && make
 - Verificar se GPU está sendo usada (YOLO)
 - Reduzir resolução de entrada
 - Aumentar timeout no código
+
+#### Falha ocasional no clustering (OpenAI) com JSON vazio / output_text vazio
+
+**Sintoma:** erro parecido com:
+
+```
+ValueError: OpenAI response output_text is empty
+ValueError: Failed to parse OpenAI clustering JSON. output_text preview: <empty>
+```
+
+**Causa:** A API do OpenAI pode retornar uma resposta vazia/truncada de forma intermitente.
+
+**Comportamento atual:** o pipeline trata isso como **best-effort** e aplica um fallback determinístico (cluster único `unassigned`), para que a imagem ainda gere:
+
+- outputs em `visible/`
+- imagem em `FLIR/` (EXIF spots)
+
+E o motivo é registrado em `run_metadata.json` (campo `openai_clustering_error`).
 
 ### 10.2 Problemas de Alinhamento
 

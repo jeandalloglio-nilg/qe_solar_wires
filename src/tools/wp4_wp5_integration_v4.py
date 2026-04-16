@@ -69,9 +69,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
-import math
 import os
 import re
 import subprocess
@@ -830,6 +830,28 @@ def fix_and_validate_clusters(
     }
 
 
+def _fallback_single_cluster(keypoints: List[Dict[str, Any]], reason: str) -> Dict[str, Any]:
+    """Fallback clustering used when LLM clustering fails.
+
+    Keeps pipeline running and still allows overlays/anomalies/EXIF injection.
+    """
+    kp_ids = [int(k["id"]) for k in keypoints] if keypoints else []
+    legend_entries = [{"cluster_id": 0, "label": "C0: unassigned"}]
+    clusters = []
+    if kp_ids:
+        clusters = [{"cluster_id": 0, "component_type": "unassigned", "keypoint_ids": kp_ids}]
+    return {
+        "clusters": clusters,
+        "annotation_spec": {
+            "draw_cluster_tag_next_to_each_keypoint": True,
+            "cluster_tag_format": "C{cluster_id}",
+            "legend_box": True,
+            "legend_entries": legend_entries,
+            "fallback_reason": reason,
+        },
+    }
+
+
 # =============================================================================
 # Anomaly detection (within cluster)
 # =============================================================================
@@ -1487,6 +1509,13 @@ def inject_spots_to_exif(
         if not atlas_libdir:
             atlas_libdir = str(atlas_root / "lib")
     
+    # Ensure we don't accidentally keep a stale output from a previous run.
+    try:
+        if output_path.exists():
+            output_path.unlink()
+    except Exception:
+        pass
+
     # Extrair coordenadas térmicas
     coords = []
     for kp in keypoints:
@@ -1497,9 +1526,9 @@ def inject_spots_to_exif(
         coords.append((x_int, y_int))
     
     if not coords:
-        print("⚠️  Nenhuma coordenada para injetar")
-        shutil.copy2(source_raw, output_path)
-        return True
+        # Important: do NOT fallback to copying the source image, because that can
+        # preserve camera HUD/overlay. We still want a clean export via Atlas SDK.
+        print("⚠️  Nenhuma coordenada para injetar (export limpo via Atlas, N=0)")
     
     # Garantir executável Atlas compilado
     exe_path = _ensure_atlas_tool(atlas_include, atlas_libdir, atlas_libs)
@@ -1508,6 +1537,7 @@ def inject_spots_to_exif(
         return False
     
     # Montar comando: atlas_write_spots <in> <out> <N> x1 y1 x2 y2 ...
+    # N can be 0 (still produces a clean re-saved RJPEG/JPEG output).
     cmd = [str(exe_path), str(source_raw), str(output_path), str(len(coords))]
     for x, y in coords:
         cmd.extend([str(x), str(y)])
@@ -1519,6 +1549,11 @@ def inject_spots_to_exif(
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         if result.returncode != 0:
             print(f"⚠️  Atlas SDK error: {result.stderr or result.stdout}")
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+            except Exception:
+                pass
             return False
         
         if output_path.exists():
@@ -1528,9 +1563,19 @@ def inject_spots_to_exif(
             return False
     except subprocess.TimeoutExpired:
         print("⚠️  Timeout ao injetar spots")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+        except Exception:
+            pass
         return False
     except Exception as e:
         print(f"⚠️  Erro ao injetar spots: {e}")
+        try:
+            if output_path.exists():
+                output_path.unlink()
+        except Exception:
+            pass
         return False
 
 
@@ -1562,7 +1607,8 @@ int main(int argc, char** argv) {
         ACS_MeasurementSpot* spot = ACS_Measurements_addSpot(ms, x, y);
         if (!spot) fprintf(stderr, "addSpot(%d,%d) falhou\n", x, y);
     }
-    ACS_ThermalImage_saveAs(image, (const ACS_NativePathChar*)out_path, ACS_FileFormat_jpeg);
+    // 0 = keep original file format (typically radiometric RJPEG if input is RJPEG)
+    ACS_ThermalImage_saveAs(image, (const ACS_NativePathChar*)out_path, 0);
     ACS_ThermalImage_free(image);
     return 0;
 }
@@ -1583,6 +1629,8 @@ def _ensure_atlas_tool(
     exe_path = build_dir / "atlas_write_spots"
     src_path = build_dir / "atlas_write_spots.c"
     meta_path = build_dir / "atlas_write_spots.meta.json"
+
+    src_hash = hashlib.sha256(_ATLAS_WRITE_SPOTS_C.encode("utf-8")).hexdigest()
     
     # Se já existe e a config é a mesma, retornar
     if exe_path.exists() and meta_path.exists():
@@ -1592,6 +1640,7 @@ def _ensure_atlas_tool(
                 meta.get("atlas_include") == str(atlas_include)
                 and meta.get("atlas_libdir") == str(atlas_libdir)
                 and meta.get("atlas_libs") == str(atlas_libs)
+                and meta.get("src_hash") == src_hash
             ):
                 return exe_path
         except Exception:
@@ -1628,7 +1677,12 @@ def _ensure_atlas_tool(
         try:
             meta_path.write_text(
                 json.dumps(
-                    {"atlas_include": str(atlas_include), "atlas_libdir": str(atlas_libdir), "atlas_libs": str(atlas_libs)},
+                    {
+                        "atlas_include": str(atlas_include),
+                        "atlas_libdir": str(atlas_libdir),
+                        "atlas_libs": str(atlas_libs),
+                        "src_hash": src_hash,
+                    },
                     indent=2,
                     ensure_ascii=False,
                 ),
@@ -1892,6 +1946,35 @@ def main(argv: Optional[List[str]] = None) -> None:
     _write_json(out_dir / f"{base_image_path.stem}_keypoints_used.json", keypoints)
 
     if no_keypoints:
+        # Still generate visualization outputs (empty overlays) so the pipeline can
+        # export a consistent visible/ image in minimal-output mode.
+        dual_viz_outputs = {}
+        if args.dual_viz and args.thermal_clean_image and args.rgb_image:
+            print("\n🎨 Generating dual visualizations (thermal + RGB)...")
+            try:
+                thermal_clean_bgr = cv2.imread(str(Path(args.thermal_clean_image)), cv2.IMREAD_COLOR)
+                rgb_bgr_viz = cv2.imread(str(Path(args.rgb_image)), cv2.IMREAD_COLOR)
+
+                if thermal_clean_bgr is not None and rgb_bgr_viz is not None:
+                    if thermal_clean_bgr.shape[:2] != (th_size[1], th_size[0]):
+                        thermal_clean_bgr = cv2.resize(thermal_clean_bgr, th_size)
+
+                    dual_viz_outputs = generate_dual_visualizations(
+                        thermal_clean_bgr=thermal_clean_bgr,
+                        rgb_bgr=rgb_bgr_viz,
+                        keypoints=keypoints,
+                        clusters=[],
+                        anomalies=[],
+                        output_dir=out_dir,
+                        prefix=prefix,
+                    )
+                    for name, path in dual_viz_outputs.items():
+                        print(f"   ✅ {name}: {path.name}")
+                else:
+                    print("   ⚠️  Could not load images for dual visualization")
+            except Exception as e:
+                print(f"   ⚠️  Dual visualization error: {e}")
+
         clusters_fixed = {
             "clusters": [],
             "annotation_spec": {
@@ -1949,7 +2032,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "openai_model": str(args.openai_model),
             "output_dir": str(out_dir),
             "output_prefix": prefix,
-            "dual_viz": False,
+            "dual_viz": bool(dual_viz_outputs),
             "exif_injected": exif_output_path is not None,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "version": "v5",
@@ -1962,16 +2045,23 @@ def main(argv: Optional[List[str]] = None) -> None:
     llm_img_out = out_dir / f"{base_image_path.stem}_llm_keypoints.png"
     cv2.imwrite(str(llm_img_out), llm_img)
 
-    # OpenAI clustering
+    # OpenAI clustering (best-effort)
+    clusters_fixed = None
+    llm_cluster_error = None
     print(f"\n🤖 Clustering with OpenAI ({args.openai_model}) ...")
-    clusters_raw = call_openai_clusters(
-        image_bgr_with_ids=llm_img,
-        keypoints=keypoints,
-        model=str(args.openai_model),
-        prompt=THERMAL_GROUPING_PROMPT,
-        temperature=float(args.llm_temperature),
-    )
-    clusters_fixed = fix_and_validate_clusters(clusters_raw, keypoints)
+    try:
+        clusters_raw = call_openai_clusters(
+            image_bgr_with_ids=llm_img,
+            keypoints=keypoints,
+            model=str(args.openai_model),
+            prompt=THERMAL_GROUPING_PROMPT,
+            temperature=float(args.llm_temperature),
+        )
+        clusters_fixed = fix_and_validate_clusters(clusters_raw, keypoints)
+    except Exception as e:
+        llm_cluster_error = str(e)
+        print(f"   ⚠️  OpenAI clustering failed, using fallback clustering: {e}")
+        clusters_fixed = _fallback_single_cluster(keypoints, reason=llm_cluster_error)
 
     clusters_out = out_dir / f"{base_image_path.stem}_clusters.json"
     _write_json(clusters_out, clusters_fixed)
@@ -2062,6 +2152,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "temperature_summary": temp_summary,
         "delta_threshold_c": float(args.delta_threshold),
         "openai_model": str(args.openai_model),
+        "openai_clustering_error": llm_cluster_error,
         "output_dir": str(out_dir),
         "output_prefix": prefix,
         "dual_viz": bool(dual_viz_outputs),

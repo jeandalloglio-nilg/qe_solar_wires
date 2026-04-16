@@ -96,6 +96,14 @@ class PipelineConfig:
     
     # Subpastas customizáveis
     raw_subdir: str = None
+
+    # Export mode
+    minimal_output: bool = False
+    force_clean_output: bool = False
+
+    # Reprocessing / retry
+    retry_errors_from: Optional[Path] = None
+    only_original_stems: Optional[set] = field(default=None, repr=False, compare=False)
     
     # Paths auxiliares
     raw_images_dir: Path = field(default=None)
@@ -114,6 +122,14 @@ class PipelineConfig:
                 if p.exists():
                     self.yolo_model = p
                     break
+
+            # Fallback: pick most recent training run
+            if self.yolo_model is None:
+                runs_dir = Path("runs") / "wp4_keypoints"
+                candidates = list(runs_dir.glob("**/weights/best.pt")) if runs_dir.exists() else []
+                if candidates:
+                    candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    self.yolo_model = candidates[0]
         elif self.yolo_model:
             self.yolo_model = Path(self.yolo_model)
         
@@ -254,6 +270,17 @@ def find_tuned_image_for_raw(raw_stem: str, tuned_dir: Path, name_mapping: Dict[
             return img_path
     
     return None
+
+
+def _load_error_stems_from_log(log_path: Path) -> set:
+    data = json.loads(log_path.read_text(encoding="utf-8"))
+    stems = set()
+    for r in (data.get("image_results", []) if isinstance(data, dict) else []):
+        if isinstance(r, dict) and r.get("status") == "error":
+            fn = r.get("filename")
+            if isinstance(fn, str) and fn.strip():
+                stems.add(fn.strip())
+    return stems
 
 
 # =============================================================================
@@ -493,6 +520,9 @@ def step_4_wp4_wp5_analysis(
         if original_stem is None:
             # Fallback: usar o próprio stem (pode ser que não tenha passado pelo sorting)
             original_stem = tuned_stem
+
+        if config.only_original_stems is not None and original_stem not in config.only_original_stems:
+            continue
         
         sorted_name = name_mapping.get(original_stem, tuned_stem)
         
@@ -532,6 +562,29 @@ def step_4_wp4_wp5_analysis(
         
         print(f"   📷 Clean: {clean_path.name}")
         print(f"   📷 Tuned: {tuned_path.name}")
+
+        # Sempre usar o RAW original como fonte radiométrica para a injeção EXIF
+        raw_path = None
+        raw_candidates = [
+            config.raw_images_dir / f"{original_stem}{ext}" for ext in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]
+        ]
+        for rp in raw_candidates:
+            if rp.exists():
+                raw_path = rp
+                break
+        if raw_path is None:
+            # Fallback: se não achou pelo stem, tente procurar recursivamente (caso de subpastas)
+            for rp in list_images_recursive(config.raw_images_dir):
+                if rp.stem == original_stem:
+                    raw_path = rp
+                    break
+        if raw_path is None:
+            print(f"   ⚠️  RAW original não encontrado para injeção EXIF: {original_stem}")
+            result.status = "error"
+            result.error_message = "RAW image not found for EXIF injection"
+            results.append(result)
+            continue
+        print(f"   📷 RAW:   {raw_path.name}")
         
         # Criar pasta de output
         img_output_dir = output_dir / sorted_name
@@ -542,10 +595,11 @@ def step_4_wp4_wp5_analysis(
         (img_output_dir / "rgb").mkdir(exist_ok=True)
         
         # Montar comando wp4_wp5_integration_v4
-        # IMPORTANTE: --raw-image agora aponta para a imagem TUNED!
+        # IMPORTANTE: --raw-image deve apontar para o RAW original (sem overlay) para
+        # garantir um arquivo FLIR final limpo + spots no EXIF.
         cmd = [
             sys.executable, "-m", "src.tools.wp4_wp5_integration_v4",
-            "--raw-image", str(tuned_path),  # ← TUNED, não RAW original!
+            "--raw-image", str(raw_path),
             "--rgb-image", str(rgb_path),
             "--thermal-clean-image", str(clean_path),
             "--keypoint-source", "yolo",
@@ -725,6 +779,104 @@ def step_5_wp6_report(
     return report_dir
 
 
+def _ensure_empty_output_dir(output_dir: Path, force_clean: bool) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    existing = [p for p in output_dir.iterdir() if p.name not in {".gitkeep"}]
+    if not existing:
+        return
+    if not force_clean:
+        raise RuntimeError(
+            f"Output folder is not empty: {output_dir}. Use --force-clean-output to wipe it in minimal mode."
+        )
+    for p in existing:
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+
+
+def _export_minimal_outputs(
+    work_output: Path,
+    final_output: Path,
+    image_results: List[ImageResult],
+    raw_images_dir: Path,
+) -> Tuple[int, int]:
+    analysis_dir = work_output / "05_wp4_wp5_analysis"
+    edited_dir = analysis_dir / "edited"
+    clean_dir = work_output / "02_thermal_clean"
+
+    visible_dir = final_output / "visible"
+    flir_dir = final_output / "FLIR"
+    visible_dir.mkdir(parents=True, exist_ok=True)
+    flir_dir.mkdir(parents=True, exist_ok=True)
+
+    visible_exported = 0
+    flir_exported = 0
+
+    by_sorted: Dict[str, ImageResult] = {
+        r.sorted_name: r for r in image_results if isinstance(r.sorted_name, str) and r.sorted_name.strip()
+    }
+
+    if analysis_dir.exists():
+        for img_dir in sorted([p for p in analysis_dir.iterdir() if p.is_dir() and p.name != "edited"]):
+            prefix = img_dir.name
+            r = by_sorted.get(prefix)
+
+            if r is not None and int(getattr(r, "keypoint_count", 0) or 0) <= 0:
+                clean_src = None
+                if raw_images_dir and clean_dir.exists() and isinstance(r.filename, str) and r.filename.strip():
+                    for cp in [
+                        clean_dir / f"{r.filename}_clean.png",
+                        clean_dir / f"{r.filename}.png",
+                        clean_dir / f"{r.filename}_clean.jpg",
+                    ]:
+                        if cp.exists():
+                            clean_src = cp
+                            break
+                if clean_src is not None:
+                    dest = visible_dir / f"{prefix}_thermal_visible{clean_src.suffix.lower()}"
+                    shutil.copy2(clean_src, dest)
+                    visible_exported += 1
+            else:
+                candidates = [
+                    img_dir / "thermal" / f"{prefix}_thermal_keypoints.png",
+                    img_dir / "thermal" / f"{prefix}_thermal_anomalies.png",
+                    img_dir / f"{prefix}_analysis_side_by_side.png",
+                ]
+                src = next((c for c in candidates if c.exists()), None)
+                if src is not None:
+                    dest = visible_dir / f"{prefix}_thermal_visible{src.suffix.lower()}"
+                    shutil.copy2(src, dest)
+                    visible_exported += 1
+
+            if r is not None and int(getattr(r, "keypoint_count", 0) or 0) <= 0:
+                raw_src = None
+                if raw_images_dir and isinstance(r.filename, str) and r.filename.strip():
+                    for ext in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]:
+                        cand = raw_images_dir / f"{r.filename}{ext}"
+                        if cand.exists():
+                            raw_src = cand
+                            break
+                    if raw_src is None:
+                        for cand in list_images_recursive(raw_images_dir):
+                            if cand.stem == r.filename:
+                                raw_src = cand
+                                break
+                if raw_src is not None:
+                    dest = flir_dir / f"{prefix}_thermal_FLIR{raw_src.suffix.lower()}"
+                    shutil.copy2(raw_src, dest)
+                    flir_exported += 1
+            else:
+                if edited_dir.exists():
+                    p = edited_dir / f"{prefix}_with_spots.jpg"
+                    if p.exists():
+                        dest = flir_dir / f"{prefix}_thermal_FLIR.jpg"
+                        shutil.copy2(p, dest)
+                        flir_exported += 1
+
+    return visible_exported, flir_exported
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -754,7 +906,76 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     if not config.raw_images_dir.exists():
         print(f"❌ RAW Images não encontrado: {config.raw_images_dir}")
         return result
-    
+
+    if config.retry_errors_from is not None:
+        retry_path = Path(config.retry_errors_from)
+        if not retry_path.exists():
+            raise FileNotFoundError(f"retry log not found: {retry_path}")
+        stems = _load_error_stems_from_log(retry_path)
+        config.only_original_stems = stems
+        print(f"\n🔁 Retry mode: {len(stems)} imagens (status=error) do log: {retry_path}")
+
+    if config.minimal_output:
+        _ensure_empty_output_dir(config.output_folder, config.force_clean_output)
+        work_output = config.output_folder / "_work"
+        if work_output.exists():
+            shutil.rmtree(work_output)
+        work_output.mkdir(parents=True, exist_ok=True)
+
+        work_config = PipelineConfig(
+            site_folder=config.site_folder,
+            output_folder=work_output,
+            skip_clean=config.skip_clean,
+            skip_wp1=config.skip_wp1,
+            # In minimal-output mode we keep original thermal range (no tuning)
+            skip_wp2=True,
+            skip_wp4_wp5=config.skip_wp4_wp5,
+            skip_wp6=True,
+            keypoint_source=config.keypoint_source,
+            yolo_model=config.yolo_model,
+            yolo_conf=config.yolo_conf,
+            wp1_model=config.wp1_model,
+            wp2_palette=config.wp2_palette,
+            atlas_sdk_dir=config.atlas_sdk_dir,
+            openai_model=config.openai_model,
+            delta_threshold=config.delta_threshold,
+            kernel_size=config.kernel_size,
+            real2ir=config.real2ir,
+            offset_x=config.offset_x,
+            offset_y=config.offset_y,
+            scale_to_rgb=config.scale_to_rgb,
+            clip_outside=config.clip_outside,
+            raw_subdir=config.raw_subdir,
+            minimal_output=False,
+            force_clean_output=False,
+        )
+
+        work_result = run_pipeline(work_config)
+
+        # Keep a copy of the pipeline log in the final output (work folder is deleted)
+        try:
+            (config.output_folder / "pipeline_log.json").write_text(
+                json.dumps(asdict(work_result), indent=2, default=str), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+        hotspots_count, clean_count = _export_minimal_outputs(
+            work_output,
+            config.output_folder,
+            work_result.image_results or [],
+            work_config.raw_images_dir,
+        )
+        shutil.rmtree(work_output, ignore_errors=True)
+
+        print("\n" + "=" * 70)
+        print("✅ MINIMAL EXPORT CONCLUÍDO!")
+        print("=" * 70)
+        print(f"📁 Output: {config.output_folder}")
+        print(f"visible/ exportadas: {hotspots_count}")
+        print(f"FLIR/ exportadas: {clean_count}")
+        return work_result
+
     config.output_folder.mkdir(parents=True, exist_ok=True)
     
     # Etapa 0: Extrair RGB
@@ -848,6 +1069,23 @@ Exemplos:
     parser.add_argument("--skip-wp2", action="store_true")
     parser.add_argument("--skip-wp4-wp5", action="store_true")
     parser.add_argument("--skip-wp6", action="store_true")
+
+    parser.add_argument(
+        "--minimal-output",
+        action="store_true",
+        help="Roda a pipeline completa mas salva no output final apenas: (1) imagem com hotspots desenhados e (2) imagem clean com keypoints nos EXIF (FLIR Tools).",
+    )
+    parser.add_argument(
+        "--force-clean-output",
+        action="store_true",
+        help="No modo --minimal-output, apaga o conteúdo existente da pasta de output antes de exportar.",
+    )
+
+    parser.add_argument(
+        "--retry-errors-from",
+        default=None,
+        help="Reprocessa apenas as imagens que deram status=error em um pipeline_log.json anterior (passar caminho para o JSON).",
+    )
     
     # Alinhamento manual
     parser.add_argument("--real2ir", type=float, help="Real2IR override")
@@ -878,6 +1116,9 @@ Exemplos:
         atlas_sdk_dir=Path(args.atlas_sdk_dir) if args.atlas_sdk_dir else None,
         openai_model=args.openai_model,
         delta_threshold=args.delta_threshold,
+        minimal_output=args.minimal_output,
+        force_clean_output=args.force_clean_output,
+        retry_errors_from=Path(args.retry_errors_from) if args.retry_errors_from else None,
     )
     
     run_pipeline(config)
