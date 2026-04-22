@@ -48,6 +48,8 @@ Opera exclusivamente em modo **RAW-Only**, processando imagens FLIR radiométric
 - Consolidação de resultados
 - Geração de logs e métricas
 
+Além disso, o pipeline possui um **modo de exportação minimal** (`--minimal-output`) que executa o processamento em uma pasta de trabalho temporária (`_work/`) e ao final exporta apenas os artefatos finais essenciais (pasta `visible/` e pasta `FLIR/`) + `pipeline_log.json`.
+
 ---
 
 ## 2. Localização e Execução
@@ -602,11 +604,11 @@ def step_4_wp4_wp5_analysis(
    - Parsear resultados (anomalies.json, keypoints_used.json)
    - Criar `ImageResult`
 
-**Comando montado:**
+**Comando montado (comportamento atual):**
 ```python
 cmd = [
     sys.executable, "-m", "src.tools.wp4_wp5_integration_v4",
-    "--raw-image", str(tuned_path),      # ← TUNED, não RAW!
+    "--raw-image", str(raw_path),        # ← RAW original (fonte radiométrica + injeção EXIF)
     "--rgb-image", str(rgb_path),
     "--thermal-clean-image", str(clean_path),
     "--keypoint-source", "yolo",
@@ -626,7 +628,12 @@ cmd = [
 ]
 ```
 
-**Nota importante:** O parâmetro `--raw-image` recebe a imagem **TUNED**, não a RAW original. Isso garante que os spots injetados no EXIF tenham o mesmo scale range visível no FLIR Tools.
+**Notas importantes (RAW vs Tuned):**
+
+- O `run_full_pipeline.py` **itera** sobre os arquivos de `04_wp2_thermal_tuned/` (ou a cópia fallback, caso WP2 seja pulado/falhe), pois é essa pasta que representa o estado pós-WP1/WP2 e define o naming final por grupo.
+- Porém, o `--raw-image` passado para `wp4_wp5_integration_v4` é o **RAW original**, porque:
+  - é a fonte radiométrica confiável para extração de temperaturas;
+  - é o arquivo correto para gerar o JPG final compatível com FLIR Tools com spots injetados.
 
 **Timeout:** 300 segundos por imagem
 
@@ -795,6 +802,9 @@ if __name__ == "__main__":
 | `--atlas-sdk-dir` | Auto | Diretório Atlas SDK |
 | `--openai-model` | `"gpt-4o"` | Modelo OpenAI |
 | `--delta-threshold` | `3.0` | Threshold anomalia (°C) |
+| `--minimal-output` | `False` | Executa o pipeline, mas exporta apenas `visible/`, `FLIR/` e `pipeline_log.json` |
+| `--force-clean-output` | `False` | No modo `--minimal-output`, permite apagar conteúdo existente do output |
+| `--retry-errors-from` | `None` | Reprocessa apenas imagens com `status=error` de um `pipeline_log.json` anterior |
 
 ---
 
@@ -836,6 +846,23 @@ main()
         ├── Consolidação de resultados
         │
         └── Salvar pipeline_log.json
+
+### 9.1 Fluxo no modo `--minimal-output`
+
+Quando `--minimal-output` está ativo:
+
+1. O pipeline valida se o diretório `--output` está vazio (ou exige `--force-clean-output`).
+2. Cria uma pasta de trabalho: `--output/_work/`.
+3. Executa o pipeline “normal” dentro de `_work/`, porém com:
+   - WP2 **desativado** (`skip_wp2=True`) para manter o range térmico original.
+   - WP6 **desativado** (`skip_wp6=True`) porque o objetivo é exportar apenas imagens finais.
+4. Exporta artefatos finais para o `--output`:
+   - `visible/`: PNGs de visualização (keypoints/anomalias/side-by-side), ou fallback para o `*_clean.png` quando não há keypoints.
+   - `FLIR/`: JPGs para FLIR Tools:
+     - quando há keypoints/injeção EXIF: `*_with_spots.jpg` vindo de `05_wp4_wp5_analysis/edited/`.
+     - fallback quando não há keypoints: copia o RAW original.
+   - `pipeline_log.json`: cópia do log consolidado.
+5. Apaga `_work/`.
 ```
 
 ---
@@ -940,6 +967,22 @@ python -m src.tools.run_full_pipeline \
     --offset-y -13 \
     --delta-threshold 3.0 \
     --openai-model "gpt-4o"
+
+### 11.2.1 Execução no modo minimal (export final: `visible/` + `FLIR/`)
+
+```bash
+python -m src.tools.run_full_pipeline \
+  --site-folder "data/Syncarpha/Syncarpha/Syncarpha/Dodge 1/2025" \
+  --output "output/Dodge_2025_min" \
+  --minimal-output \
+  --force-clean-output \
+  --yolo-model "runs/wp4_keypoints/train_20251211_010508/weights/best.pt" \
+  --yolo-conf 0.15 \
+  --real2ir 1.75 \
+  --offset-x -10 \
+  --offset-y -13 \
+  --delta-threshold 3.0 \
+  --openai-model "gpt-4o"
 ```
 
 ### 11.3 Reprocessamento Parcial
@@ -952,6 +995,17 @@ python -m src.tools.run_full_pipeline \
     --skip-clean \
     --skip-wp1 \
     --skip-wp2
+```
+
+### 11.3.1 Retry automático de erros a partir de um log anterior
+
+```bash
+python -m src.tools.run_full_pipeline \
+  --site-folder "data/Site/2025" \
+  --output "output/Site_retry" \
+  --minimal-output \
+  --force-clean-output \
+  --retry-errors-from "output/Site/pipeline_log.json"
 ```
 
 ### 11.4 Apenas Organização (sem análise)

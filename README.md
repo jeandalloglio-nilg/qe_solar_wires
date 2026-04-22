@@ -352,21 +352,30 @@ python -m src.tools.run_full_pipeline \
     --offset-y -13
 ```
 
-### 6.2.1 Modo de Saída Minimal (visible/ + FLIR/)
+### 6.2.1 Modo de Saída Minimal (somente `visible/` + `FLIR/`)
 
-Use este modo quando você quer **rodar o pipeline completo**, mas no final manter apenas os outputs essenciais, separados em duas pastas:
+Use este modo quando você quer **rodar a pipeline**, mas no final manter apenas os outputs essenciais, separados em duas pastas:
 
-- `visible/`: imagens térmicas com keypoints desenhados (visualização rápida)
-- `FLIR/`: imagens térmicas com spots/keypoints gravados no EXIF (para abrir no FLIR Tools)
+- `visible/`: visualizações (PNG) para validação rápida
+- `FLIR/`: JPGs para abrir no FLIR Tools (com spots no EXIF quando houver keypoints)
+
+Observações importantes do modo minimal:
+
+- O pipeline executa em uma pasta temporária `output/<Nome_Output>/_work/`.
+- WP2 (tuning) é **desativado** (`skip_wp2=True`) para manter o range original.
+- WP6 (repx) é **desativado** (`skip_wp6=True`), pois o objetivo é exportar apenas imagens.
 
 ```bash
 python -m src.tools.run_full_pipeline \
-    --site-folder "data/<Cliente>/<Site>/<Ano>" \
-    --output "output/<Nome_Output>" \
+    --site-folder "data/Syncarpha/Syncarpha/Syncarpha/Dodge 1/2025" \
+    --output "output/Dodge_2025_min" \
     --minimal-output \
     --force-clean-output \
-    --yolo-model "runs/wp4_keypoints/train_YYYYMMDD_HHMMSS/weights/best.pt" \
-    --yolo-conf 0.15
+    --yolo-model "runs/wp4_keypoints/train_20251211_010508/weights/best.pt" \
+    --yolo-conf 0.15 \
+    --real2ir 1.75 \
+    --offset-x -10 \
+    --offset-y -13
 ```
 
 **Arquivo adicional:** no modo `--minimal-output`, o pipeline também grava um `pipeline_log.json` no `--output` final, para permitir retry de erros.
@@ -523,10 +532,11 @@ python -m src.tools.run_full_pipeline \
    - Gera overlay em imagem RGB
 
 7. **Injeção EXIF**
-   - Injeta spots detectados no EXIF da imagem tuned
-   - Compatível com FLIR Tools
+   - Injeta spots detectados no EXIF gerando um arquivo `*_with_spots.jpg` compatível com FLIR Tools
+   - A injeção usa o **RAW original** como fonte radiométrica (e não o PNG clean)
+   - Gera um arquivo `*_with_spots.jpg` centralizado em `05_wp4_wp5_analysis/edited/`
 
-**Output:**
+**Output por imagem (pasta dedicada):**
 ```
 05_wp4_wp5_analysis/<sorted_name>/
 ├── thermal/
@@ -535,13 +545,14 @@ python -m src.tools.run_full_pipeline \
 │   └── <name>_rgb_viz.png
 ├── keypoints_used.json
 ├── anomalies.json
-└── <name>_edited.jpg  # Com spots injetados
+└── ...
 ```
 
 **FLIR Tools (spots no EXIF):**
-Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em:
+Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em uma pasta centralizada:
 ```
 05_wp4_wp5_analysis/edited/
+  └── <sorted_name>_with_spots.jpg
 ```
 
 **Módulo:** `src.tools.wp4_wp5_integration_v4`
@@ -667,7 +678,9 @@ output/<Nome_Output>/
 │   │   │   └── *_rgb_viz.png
 │   │   ├── keypoints_used.json
 │   │   ├── anomalies.json
-│   │   └── *_edited.jpg
+│   │   └── ...
+│   └── edited/
+│       └── *_with_spots.jpg
 │   └── ...
 │
 ├── 06_report/

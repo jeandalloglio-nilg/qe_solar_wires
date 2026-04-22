@@ -340,6 +340,32 @@ python -m src.tools.run_full_pipeline \
     --offset-y -13
 ```
 
+### 6.2.1 Modo de Saída Minimal (somente `visible/` + `FLIR/`)
+
+Use este modo quando você quer **rodar a pipeline**, mas no final manter apenas os outputs essenciais, separados em duas pastas:
+
+- `visible/`: visualizações (PNG) para validação rápida
+- `FLIR/`: JPGs para abrir no FLIR Tools (com spots no EXIF quando houver keypoints)
+
+Observações importantes do modo minimal:
+
+- O pipeline executa em uma pasta temporária `output/<Nome_Output>/_work/`.
+- WP2 (tuning) é **desativado** (`skip_wp2=True`) para manter o range original.
+- WP6 (repx) é **desativado** (`skip_wp6=True`), pois o objetivo é exportar apenas imagens.
+
+```bash
+python -m src.tools.run_full_pipeline \
+    --site-folder "data/Syncarpha/Syncarpha/Syncarpha/Dodge 1/2025" \
+    --output "output/Dodge_2025_min" \
+    --minimal-output \
+    --force-clean-output \
+    --yolo-model "runs/wp4_keypoints/train_20251211_010508/weights/best.pt" \
+    --yolo-conf 0.15 \
+    --real2ir 1.75 \
+    --offset-x -10 \
+    --offset-y -13
+```
+
 ### 6.3 Exemplos Práticos
 
 **Exemplo 1: Site novo com configuração padrão**
@@ -479,10 +505,11 @@ python -m src.tools.run_full_pipeline \
    - Gera overlay em imagem RGB
 
 7. **Injeção EXIF**
-   - Injeta spots detectados no EXIF da imagem tuned
-   - Compatível com FLIR Tools
+   - Compila/usa `atlas_write_spots` (C) para escrever spots proprietários FLIR no EXIF
+   - A injeção é feita a partir do **RAW original** (fonte radiométrica)
+   - Gera um arquivo `*_with_spots.jpg` centralizado em `05_wp4_wp5_analysis/edited/`
 
-**Output:**
+**Output por imagem (pasta dedicada):**
 ```
 05_wp4_wp5_analysis/<sorted_name>/
 ├── thermal/
@@ -491,7 +518,14 @@ python -m src.tools.run_full_pipeline \
 │   └── <name>_rgb_viz.png
 ├── keypoints_used.json
 ├── anomalies.json
-└── <name>_edited.jpg  # Com spots injetados
+└── ...
+```
+
+**FLIR Tools (spots no EXIF):**
+Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em uma pasta centralizada:
+```
+05_wp4_wp5_analysis/edited/
+  └── <sorted_name>_with_spots.jpg
 ```
 
 **Módulo:** `src.tools.wp4_wp5_integration_v4`
@@ -614,7 +648,9 @@ output/<Nome_Output>/
 │   │   │   └── *_rgb_viz.png
 │   │   ├── keypoints_used.json
 │   │   ├── anomalies.json
-│   │   └── *_edited.jpg
+│   │   └── ...
+│   └── edited/
+│       └── *_with_spots.jpg
 │   └── ...
 │
 ├── 06_report/

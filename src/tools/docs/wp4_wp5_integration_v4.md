@@ -1101,24 +1101,22 @@ output_dir/
 
 ```bash
 python -m src.tools.wp4_wp5_integration_v4 \
-    --raw-image "04_wp2_thermal_tuned/CB/image.jpg" \
-    --rgb-image "01_rgb_extracted/image_rgb.jpg" \
-    --thermal-clean-image "02_thermal_clean/image_clean.png" \
+    --raw-image <raw_original> \
+    --rgb-image <rgb_image> \
+    --thermal-clean-image <clean_image> \
     --keypoint-source yolo \
-    --yolo-model "runs/wp4_keypoints/train_20251211_010508/weights/best.pt" \
+    --yolo-model <model_path> \
     --yolo-conf 0.15 \
-    --yolo-image "02_thermal_clean/image_clean.png" \
+    --yolo-image <clean_image> \
     --extract-temperatures \
-    --scale-to-rgb \
-    --real2ir 1.75 \
-    --offset-x -10 \
-    --offset-y -13 \
-    --clip-outside \
+    --kernel-size 3 \
     --delta-threshold 3.0 \
-    --openai-model gpt-4o \
+    --output <output_dir> \
+    --output-prefix <name> \
+    --scale-to-rgb \
+    --clip-outside \
     --dual-viz \
-    --inject-exif \
-    --output "05_wp4_wp5_analysis/image/"
+    --inject-exif
 ```
 
 ### 15.2 Modo Mínimo (apenas clustering)
@@ -1154,7 +1152,7 @@ python -m src.tools.wp4_wp5_integration_v4 \
 # Em step_4_wp4_wp5_analysis()
 cmd = [
     sys.executable, "-m", "src.tools.wp4_wp5_integration_v4",
-    "--raw-image", str(tuned_path),      # ← TUNED, não RAW!
+    "--raw-image", str(raw_path),        # ← RAW original (fonte radiométrica + base para injeção EXIF)
     "--rgb-image", str(rgb_path),
     "--thermal-clean-image", str(clean_path),
     "--keypoint-source", "yolo",
@@ -1180,7 +1178,10 @@ if config.real2ir is not None:
 
 ### 16.2 Nota Importante
 
-O parâmetro `--raw-image` recebe a imagem **TUNED** (de `04_wp2_thermal_tuned/`), não a RAW original. Isso garante que os spots injetados no EXIF tenham o mesmo scale range visível no FLIR Tools.
+O `run_full_pipeline.py` **itera** sobre imagens em `04_wp2_thermal_tuned/` (ou a cópia fallback) para manter o naming/agrupamento pós-WP1/WP2, mas o `--raw-image` passado para este script é o **RAW original**. Isso garante:
+
+- extração radiométrica de temperaturas consistente;
+- geração do JPG final com spots no EXIF para abrir no FLIR Tools (`*_with_spots.jpg`).
 
 ---
 
