@@ -1535,10 +1535,34 @@ def inject_spots_to_exif(
     if exe_path is None:
         print("⚠️  Não foi possível compilar o executável Atlas")
         return False
-    
+
+    # Decide rotation inside Atlas (clockwise): 0/90/180/270.
+    # This keeps *_with_spots.jpg consistent with pipeline clean/anomalies orientation.
+    rotation_angle = 0
+    try:
+        if shutil.which("exiftool"):
+            cp = subprocess.run(
+                ["exiftool", "-Orientation", "-n", "-s", "-s", "-s", str(source_raw)],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            txt = (cp.stdout or "").strip()
+            if txt:
+                src_orient = int(txt)
+                if src_orient == 3:
+                    rotation_angle = 2
+                elif src_orient == 6:
+                    rotation_angle = 3
+                elif src_orient == 8:
+                    rotation_angle = 1
+    except Exception:
+        rotation_angle = 0
+
     # Montar comando: atlas_write_spots <in> <out> <N> x1 y1 x2 y2 ...
     # N can be 0 (still produces a clean re-saved RJPEG/JPEG output).
-    cmd = [str(exe_path), str(source_raw), str(output_path), str(len(coords))]
+    cmd = [str(exe_path), str(source_raw), str(output_path), str(rotation_angle), str(len(coords))]
     for x, y in coords:
         cmd.extend([str(x), str(y)])
     
@@ -1557,6 +1581,17 @@ def inject_spots_to_exif(
             return False
         
         if output_path.exists():
+            try:
+                if shutil.which("exiftool"):
+                    subprocess.run(
+                        ["exiftool", "-overwrite_original", "-P", "-Orientation#=1", str(output_path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+            except Exception:
+                pass
             return True
         else:
             print("⚠️  Arquivo de saída não foi criado")
@@ -1578,6 +1613,9 @@ def inject_spots_to_exif(
             pass
         return False
 
+    finally:
+        pass
+
 
 # Atlas C SDK code (embedded)
 _ATLAS_WRITE_SPOTS_C = r'''
@@ -1590,20 +1628,24 @@ _ATLAS_WRITE_SPOTS_C = r'''
 #include <acs/thermal_image.h>
 
 int main(int argc, char** argv) {
-    if (argc < 4) { fprintf(stderr, "uso: %s <in> <out> <N> [x1 y1 ...]\n", argv[0]); return 2; }
+    if (argc < 5) { fprintf(stderr, "uso: %s <in> <out> <rotation_angle> <N> [x1 y1 ...]\n", argv[0]); return 2; }
     const char* in_path = argv[1];
     const char* out_path = argv[2];
-    int n = atoi(argv[3]);
-    if (n < 0 || argc != 4 + 2*n) { fprintf(stderr, "args invalidos\n"); return 2; }
+    int rotation_angle = atoi(argv[3]);
+    int n = atoi(argv[4]);
+    if (n < 0 || argc != 5 + 2*n) { fprintf(stderr, "args invalidos\n"); return 2; }
 
     ACS_ThermalImage* image = ACS_ThermalImage_alloc();
     if (!image) { fprintf(stderr, "alloc falhou\n"); return 3; }
     ACS_ThermalImage_openFromFile(image, (const ACS_NativePathChar*)in_path);
+    if (rotation_angle >= ACS_RotationAngle_degrees0 && rotation_angle <= ACS_RotationAngle_degrees270) {
+        ACS_ThermalImage_setRotationAngle(image, rotation_angle);
+    }
     ACS_Measurements* ms = ACS_ThermalImage_getMeasurements(image);
 
     for (int i = 0; i < n; ++i) {
-        int x = atoi(argv[4 + 2*i]);
-        int y = atoi(argv[4 + 2*i + 1]);
+        int x = atoi(argv[5 + 2*i]);
+        int y = atoi(argv[5 + 2*i + 1]);
         ACS_MeasurementSpot* spot = ACS_Measurements_addSpot(ms, x, y);
         if (!spot) fprintf(stderr, "addSpot(%d,%d) falhou\n", x, y);
     }
@@ -2002,9 +2044,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         exif_output_path = None
         if args.inject_exif and raw_mode:
             print("\n💉 Injecting spots via Atlas SDK...")
-            edited_dir = out_dir.parent / "edited"
-            edited_dir.mkdir(parents=True, exist_ok=True)
-            exif_output_path = edited_dir / f"{prefix}_with_spots.jpg"
+            flir_kp_dir = out_dir / "thermal" / "FLIR_keypoints"
+            flir_kp_dir.mkdir(parents=True, exist_ok=True)
+            exif_output_path = flir_kp_dir / f"{prefix}_with_spots.jpg"
             if inject_spots_to_exif(
                 source_image,
                 exif_output_path,
@@ -2013,7 +2055,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 atlas_libdir=args.atlas_libdir,
                 atlas_libs=args.atlas_libs,
             ):
-                print(f"   ✅ ../edited/{exif_output_path.name}")
+                print(f"   ✅ {exif_output_path}")
             else:
                 print("   ⚠️  Atlas SDK injection failed")
                 exif_output_path = None
@@ -2123,10 +2165,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     exif_output_path = None
     if args.inject_exif and raw_mode:
         print("\n💉 Injecting spots via Atlas SDK...")
-        # Criar pasta edited/ centralizada no nível do site (diretório pai de out_dir)
-        edited_dir = out_dir.parent / "edited"
-        edited_dir.mkdir(parents=True, exist_ok=True)
-        exif_output_path = edited_dir / f"{prefix}_with_spots.jpg"
+        flir_kp_dir = out_dir / "thermal" / "FLIR_keypoints"
+        flir_kp_dir.mkdir(parents=True, exist_ok=True)
+        exif_output_path = flir_kp_dir / f"{prefix}_with_spots.jpg"
         if inject_spots_to_exif(
             source_image, 
             exif_output_path, 
@@ -2135,7 +2176,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             atlas_libdir=args.atlas_libdir,
             atlas_libs=args.atlas_libs,
         ):
-            print(f"   ✅ ../edited/{exif_output_path.name}")
+            print(f"   ✅ {exif_output_path}")
         else:
             print("   ⚠️  Atlas SDK injection failed")
             exif_output_path = None
@@ -2176,8 +2217,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         print(f" - RGB folder:      {out_dir / 'rgb'}")
         print(f" - Combined view:   {dual_viz_outputs.get('combined_view', 'N/A')}")
     if exif_output_path:
-        print(f" - Edited folder:   {out_dir.parent / 'edited'}")
-        print(f" - EXIF output:     ../edited/{exif_output_path.name}")
+        print(f" - EXIF output:     {exif_output_path}")
     print(f" - Metadata:        {out_dir / 'run_metadata.json'}")
 
 
