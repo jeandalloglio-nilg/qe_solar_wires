@@ -658,7 +658,7 @@ def step_5_wp6_report(
     # Chamar gerador REPX
     cmd = [
         sys.executable, "-m", "src.tools.wp6_repx_generator",
-        "--edited-dir", str(analysis_dir / "edited"),
+        "--edited-dir", str(analysis_dir),
         "--output", str(report_dir / "report.repx"),
         "--site-name", pipeline_result.site_name,
     ]
@@ -859,7 +859,7 @@ Quando `--minimal-output` está ativo:
 4. Exporta artefatos finais para o `--output`:
    - `visible/`: PNGs de visualização (keypoints/anomalias/side-by-side), ou fallback para o `*_clean.png` quando não há keypoints.
    - `FLIR/`: JPGs para FLIR Tools:
-     - quando há keypoints/injeção EXIF: `*_with_spots.jpg` vindo de `05_wp4_wp5_analysis/edited/`.
+     - quando há keypoints/injeção EXIF: `*_with_spots.jpg` vindo de `05_wp4_wp5_analysis/<sorted_name>/thermal/FLIR_keypoints/`.
      - fallback quando não há keypoints: copia o RAW original.
    - `pipeline_log.json`: cópia do log consolidado.
 5. Apaga `_work/`.

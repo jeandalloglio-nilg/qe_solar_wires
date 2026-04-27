@@ -59,7 +59,7 @@ Pipeline QE Solar
       │
       ├── Etapa 4: WP4+WP5 Analysis
       │       │
-      │       └── Output: 05_wp4_wp5_analysis/edited/
+      │       └── Output: 05_wp4_wp5_analysis/<equip>/thermal/FLIR_keypoints/
       │             └── *_with_spots.jpg
       │
       └── Etapa 5: WP6 Report  ◄─── ESTE MÓDULO
@@ -82,7 +82,7 @@ qe_solar_wires/src/tools/wp6_repx_generator.py
 
 ```bash
 python -m src.tools.wp6_repx_generator \
-    --edited-dir "05_wp4_wp5_analysis/edited" \
+    --edited-dir "05_wp4_wp5_analysis" \
     --output "06_report/report.repx"
 ```
 
@@ -90,7 +90,7 @@ python -m src.tools.wp6_repx_generator \
 
 ```bash
 python src/tools/wp6_repx_generator.py \
-    --edited-dir "05_wp4_wp5_analysis/edited" \
+    --edited-dir "05_wp4_wp5_analysis" \
     --output "06_report/report.repx"
 ```
 
@@ -355,7 +355,7 @@ generate_repx()
 
 | Argumento | Obrigatório | Default | Descrição |
 |-----------|-------------|---------|-----------|
-| `--edited-dir` / `-e` | ✅ | - | Pasta com imagens `*_with_spots.jpg` |
+| `--edited-dir` / `-e` | ✅ | - | Pasta base onde o script vai procurar `*_with_spots.jpg` (busca recursiva) |
 | `--output` / `-o` | ✅ | - | Caminho do arquivo `.repx` |
 | `--site-name` / `-s` | ❌ | `"Thermal Inspection Report"` | Nome do site/relatório |
 | `--logo` / `-l` | ❌ | None | Logo customizado (JPG ou PNG) |
@@ -572,7 +572,7 @@ Relacionamentos da seção para as imagens.
 
 ```bash
 python -m src.tools.wp6_repx_generator \
-    --edited-dir "output/05_wp4_wp5_analysis/edited" \
+    --edited-dir "output/05_wp4_wp5_analysis" \
     --output "output/06_report/inspection_report.repx"
 ```
 
@@ -580,7 +580,7 @@ python -m src.tools.wp6_repx_generator \
 
 ```bash
 python -m src.tools.wp6_repx_generator \
-    --edited-dir "output/edited" \
+    --edited-dir "output/05_wp4_wp5_analysis" \
     --output "output/report.repx" \
     --site-name "Syncarpha - Dodge 1 - 2025" \
     --logo "assets/company_logo.png"

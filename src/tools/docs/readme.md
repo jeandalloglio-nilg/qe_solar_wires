@@ -507,7 +507,7 @@ python -m src.tools.run_full_pipeline \
 7. **Injeção EXIF**
    - Compila/usa `atlas_write_spots` (C) para escrever spots proprietários FLIR no EXIF
    - A injeção é feita a partir do **RAW original** (fonte radiométrica)
-   - Gera um arquivo `*_with_spots.jpg` centralizado em `05_wp4_wp5_analysis/edited/`
+   - Gera um arquivo `*_with_spots.jpg` dentro de cada equipamento em `05_wp4_wp5_analysis/<sorted_name>/thermal/FLIR_keypoints/`
 
 **Output por imagem (pasta dedicada):**
 ```
@@ -522,9 +522,9 @@ python -m src.tools.run_full_pipeline \
 ```
 
 **FLIR Tools (spots no EXIF):**
-Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em uma pasta centralizada:
+Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados dentro de cada equipamento:
 ```
-05_wp4_wp5_analysis/edited/
+05_wp4_wp5_analysis/<sorted_name>/thermal/FLIR_keypoints/
   └── <sorted_name>_with_spots.jpg
 ```
 

@@ -534,7 +534,7 @@ python -m src.tools.run_full_pipeline \
 7. **Injeção EXIF**
    - Injeta spots detectados no EXIF gerando um arquivo `*_with_spots.jpg` compatível com FLIR Tools
    - A injeção usa o **RAW original** como fonte radiométrica (e não o PNG clean)
-   - Gera um arquivo `*_with_spots.jpg` centralizado em `05_wp4_wp5_analysis/edited/`
+   - Gera um arquivo `*_with_spots.jpg` dentro de cada equipamento em `05_wp4_wp5_analysis/<sorted_name>/thermal/FLIR_keypoints/`
 
 **Output por imagem (pasta dedicada):**
 ```
@@ -549,9 +549,9 @@ python -m src.tools.run_full_pipeline \
 ```
 
 **FLIR Tools (spots no EXIF):**
-Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados em uma pasta centralizada:
+Quando `--inject-exif` está ativo, os arquivos com spots injetados são gravados dentro de cada equipamento:
 ```
-05_wp4_wp5_analysis/edited/
+05_wp4_wp5_analysis/<sorted_name>/thermal/FLIR_keypoints/
   └── <sorted_name>_with_spots.jpg
 ```
 
@@ -674,13 +674,13 @@ output/<Nome_Output>/
 │   ├── 01-0036-15-INSIDE-01-Inverter1_IR_54393/
 │   │   ├── thermal/
 │   │   │   └── *_thermal_viz.png
+│   │   │   └── FLIR_keypoints/
+│   │   │       └── *_with_spots.jpg
 │   │   ├── rgb/
 │   │   │   └── *_rgb_viz.png
 │   │   ├── keypoints_used.json
 │   │   ├── anomalies.json
 │   │   └── ...
-│   └── edited/
-│       └── *_with_spots.jpg
 │   └── ...
 │
 ├── 06_report/

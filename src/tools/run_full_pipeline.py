@@ -710,7 +710,7 @@ def step_5_wp6_report(
     # Usar wp6_repx_generator.py
     cmd = [
         sys.executable, "-m", "src.tools.wp6_repx_generator",
-        "--edited-dir", str(analysis_dir / "edited"),  # pasta edited/
+        "--edited-dir", str(analysis_dir),
         "--output", str(report_dir / "report.repx"),   # arquivo .repx 
         "--site-name", pipeline_result.site_name,
     ]

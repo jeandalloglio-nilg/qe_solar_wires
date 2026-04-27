@@ -830,9 +830,8 @@ def _ensure_atlas_tool(atlas_include, atlas_libdir, atlas_libs) -> Optional[Path
 │   ├── thermal/
 │   ├── rgb/
 │   └── ...
-│
-└── edited/                    # ← Pasta centralizada
-    └── <image_name>_with_spots.jpg
+│   └── thermal/FLIR_keypoints/
+│       └── <image_name>_with_spots.jpg
 ```
 
 ---

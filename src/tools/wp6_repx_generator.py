@@ -139,22 +139,22 @@ def generate_repx(
     logo_path: Optional[Path] = None,
 ) -> bool:
     """
-    Gera arquivo .repx a partir das imagens na pasta edited/.
+    Gera arquivo .repx a partir das imagens `*_with_spots.jpg`.
     """
     print("\n" + "=" * 70)
     print("WP6 - REPX Report Generator (v2.1)")
     print("=" * 70)
     
     # Encontrar imagens
-    images = sorted(edited_dir.glob("*_with_spots.jpg"))
+    images = sorted(edited_dir.rglob("*_with_spots.jpg"))
     if not images:
-        images = sorted(edited_dir.glob("*.jpg"))
+        images = sorted(edited_dir.rglob("*.jpg"))
     
     if not images:
         print(f"❌ Nenhuma imagem encontrada em: {edited_dir}")
         return False
     
-    print(f"\n📂 Pasta edited: {edited_dir}")
+    print(f"\n📂 Pasta de imagens: {edited_dir}")
     print(f"📷 Imagens encontradas: {len(images)}")
     print(f"📋 Site: {site_name}")
     
